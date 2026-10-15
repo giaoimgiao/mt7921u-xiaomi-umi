@@ -44,6 +44,51 @@ Both were solved empirically, and the method is documented so it can be reused.
 
 ---
 
+## Plain language: what this is, and what it gets you
+
+If kernel terms are not your thing, this is the whole thing in one paragraph.
+
+The phone's stock kernel ships **no driver** for this Wi-Fi dongle, and it also
+makes loading self-built drivers hard on purpose (it checks that the driver was
+built for exactly this kernel). This repository solves both: it contains the
+driver, built to match the phone, plus the tooling that figures out *how* to match
+it. The driver is already proven to load on the device. What is still missing is
+not code — it is power: the phone's OTG port cannot supply the current spike the
+dongle needs when it powers up, so the dongle never appears on the USB bus and the
+driver never gets a chance to talk to it. A powered USB hub fixes that.
+
+### Words used above, in everyday terms
+
+| term | what it means | how you know it worked |
+|---|---|---|
+| **USB enumeration** | the dongle is powered up and introduces itself to the phone | `ls /sys/bus/usb/devices/` shows a new device |
+| **probe** | the driver recognises the chip and initialises it | `dmesg` shows the chip, and a `wlanX` interface appears |
+| **firmware / "firmware download"** | the chip ships mostly empty; the driver uploads its microcode (two `.bin` files) into it every time it powers on | `dmesg` shows the firmware loading, then the chip reporting ready |
+| **scan** | list nearby Wi-Fi networks (name, channel, encryption, signal) — the normal thing any Wi-Fi card does | `iw dev wlanX scan` returns networks |
+| **monitor mode** | the card stops filtering and hands up *every* frame it hears on the channel, instead of only frames addressed to it | `iw dev wlanX interface add mon0 type monitor` works, `tcpdump -i mon0` shows traffic |
+| **injection** | the card can also *transmit* frames you craft yourself, not just receive | `aireplay-ng --test mon0` reports working injection |
+
+Analogy: a normal card answers only calls addressed to it; monitor mode records
+every radio conversation in the street; injection lets you talk on that radio
+yourself.
+
+### What you can actually do once it works
+
+* Run a real `aircrack-ng` workflow from the Kali container on the phone:
+  scan → monitor → capture → analyse, while the phone's own `wlan0` stays online
+  for looking things up (two radios, no interference).
+* Audit **your own** network: which APs crowd which channel, whether there are
+  unknown devices, how strong your WPA passphrase really is when someone can
+  capture the 4-way handshake.
+* Learn/teach 802.11: see real beacon, probe, auth and handshake frames instead of
+  reading about them.
+
+Monitor mode and injection are ordinary tools, but use them only on networks you
+own or have written permission to test — doing this to someone else's network is
+illegal in most places.
+
+---
+
 ## How it works, in one screen
 
 ```
