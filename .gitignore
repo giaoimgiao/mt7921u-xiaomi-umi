@@ -1,0 +1,24 @@
+# build artifacts
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+.*.cmd
+.*.o.d
+*.d
+modules.order
+Module.symvers
+built-in.a
+.tmp_*
+*.symvers
+
+# scratch
+work/
+pristine/
+scan_cache.json
+
+# editor / OS
+*.swp
+*~
+.DS_Store

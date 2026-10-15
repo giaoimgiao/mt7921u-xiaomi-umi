@@ -1,0 +1,1216 @@
+diff -ruN a/mt76/Kconfig b/mt76/Kconfig
+--- a/mt76/Kconfig	1970-01-01 00:00:00.000000000 +0000
++++ b/mt76/Kconfig	2026-10-14 20:32:42.094791362 +0000
+@@ -0,0 +1,31 @@
++# SPDX-License-Identifier: GPL-2.0
++# Local Kconfig glue for the backported mt76 tree: only the components needed
++# for the USB 802.11ax part are exposed.
++
++config MT76_CORE
++	tristate
++	depends on MAC80211
++	select FW_LOADER
++
++config MT76_USB
++	tristate
++	depends on USB
++	select MT76_CORE
++
++config MT76_SDIO
++	tristate
++	select MT76_CORE
++
++config MT76_CONNAC_LIB
++	tristate
++	select MT76_CORE
++
++config MT76x02_LIB
++	tristate
++	select MT76_CORE
++
++config MT76x02_USB
++	tristate
++	select MT76x02_LIB
++
++source "drivers/net/wireless/mediatek/mt76/mt7921/Kconfig"
+\ No newline at end of file
+diff -ruN a/mt76/Makefile b/mt76/Makefile
+--- a/mt76/Makefile	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/Makefile	2026-10-14 21:28:22.062790088 +0000
+@@ -1,5 +1,5 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+-EXTRA_CFLAGS += -Werror -DCONFIG_MT76_LEDS
++EXTRA_CFLAGS += -DCONFIG_MT76_LEDS
+ obj-m := mt76.o
+ obj-$(CONFIG_MT76_USB) += mt76-usb.o
+ obj-$(CONFIG_MT76_SDIO) += mt76-sdio.o
+@@ -11,7 +11,7 @@
+ 	mmio.o util.o trace.o dma.o mac80211.o debugfs.o eeprom.o \
+ 	tx.o agg-rx.o mcu.o
+ 
+-mt76-$(CONFIG_PCI) += pci.o
++# PCIe front-end not built: this target is USB only
+ mt76-$(CONFIG_NL80211_TESTMODE) += testmode.o
+ 
+ mt76-usb-y := usb.o usb_trace.o
+diff -ruN a/mt76/dma.c b/mt76/dma.c
+--- a/mt76/dma.c	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/dma.c	2026-10-14 21:13:09.694790436 +0000
+@@ -752,7 +752,7 @@
+ 	init_dummy_netdev(&dev->tx_napi_dev);
+ 	snprintf(dev->napi_dev.name, sizeof(dev->napi_dev.name), "%s",
+ 		 wiphy_name(dev->hw->wiphy));
+-	dev->napi_dev.threaded = 1;
++	/* threaded NAPI does not exist in this kernel */
+ 
+ 	mt76_for_each_q_rx(dev, i) {
+ 		netif_napi_add(&dev->napi_dev, &dev->napi[i], poll, 64);
+diff -ruN a/mt76/eeprom.c b/mt76/eeprom.c
+--- a/mt76/eeprom.c	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/eeprom.c	2026-10-14 21:22:56.670790212 +0000
+@@ -109,7 +109,8 @@
+ 
+ 	struct device_node *np = dev->dev->of_node;
+ 
+-	of_get_mac_address(np, phy->macaddr);
++	/* single-argument of_get_mac_address() on this kernel */
++	mt76_of_get_mac_address(dev->dev, phy->macaddr);
+ 
+ 	if (!is_valid_ether_addr(phy->macaddr)) {
+ 		eth_random_addr(phy->macaddr);
+diff -ruN a/mt76/mac80211.c b/mt76/mac80211.c
+--- a/mt76/mac80211.c	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/mac80211.c	2026-10-14 21:18:11.758790321 +0000
+@@ -172,25 +172,6 @@
+ };
+ EXPORT_SYMBOL_GPL(mt76_rates);
+ 
+-static const struct cfg80211_sar_freq_ranges mt76_sar_freq_ranges[] = {
+-	{ .start_freq = 2402, .end_freq = 2494, },
+-	{ .start_freq = 5150, .end_freq = 5350, },
+-	{ .start_freq = 5350, .end_freq = 5470, },
+-	{ .start_freq = 5470, .end_freq = 5725, },
+-	{ .start_freq = 5725, .end_freq = 5950, },
+-	{ .start_freq = 5945, .end_freq = 6165, },
+-	{ .start_freq = 6165, .end_freq = 6405, },
+-	{ .start_freq = 6405, .end_freq = 6525, },
+-	{ .start_freq = 6525, .end_freq = 6705, },
+-	{ .start_freq = 6705, .end_freq = 6865, },
+-	{ .start_freq = 6865, .end_freq = 7125, },
+-};
+-
+-static const struct cfg80211_sar_capa mt76_sar_capa = {
+-	.type = NL80211_SAR_TYPE_POWER,
+-	.num_freq_ranges = ARRAY_SIZE(mt76_sar_freq_ranges),
+-	.freq_ranges = &mt76_sar_freq_ranges[0],
+-};
+ 
+ static int mt76_led_init(struct mt76_dev *dev)
+ {
+@@ -267,9 +248,7 @@
+ 	}
+ 	vht_cap->vht_mcs.rx_mcs_map = cpu_to_le16(mcs_map);
+ 	vht_cap->vht_mcs.tx_mcs_map = cpu_to_le16(mcs_map);
+-	if (ieee80211_hw_check(phy->hw, SUPPORTS_VHT_EXT_NSS_BW))
+-		vht_cap->vht_mcs.tx_highest |=
+-				cpu_to_le16(IEEE80211_VHT_EXT_NSS_BW_CAPABLE);
++	/* VHT ext-NSS-BW capability is unknown to this mac80211 */
+ }
+ 
+ void mt76_set_stream_caps(struct mt76_phy *phy, bool vht)
+@@ -366,7 +345,7 @@
+ mt76_init_sband_6g(struct mt76_phy *phy, struct ieee80211_rate *rates,
+ 		   int n_rates)
+ {
+-	phy->hw->wiphy->bands[NL80211_BAND_6GHZ] = &phy->sband_6g.sband;
++	/* this kernel has no 6 GHz band */
+ 
+ 	return mt76_init_sband(phy, &phy->sband_6g, mt76_channels_6ghz,
+ 			       ARRAY_SIZE(mt76_channels_6ghz), rates,
+@@ -418,17 +397,11 @@
+ 
+ 	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_CQM_RSSI_LIST);
+ 	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_AIRTIME_FAIRNESS);
+-	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_AQL);
+ 
+ 	wiphy->available_antennas_tx = phy->antenna_mask;
+ 	wiphy->available_antennas_rx = phy->antenna_mask;
+ 
+-	wiphy->sar_capa = &mt76_sar_capa;
+-	phy->frp = devm_kcalloc(dev->dev, wiphy->sar_capa->num_freq_ranges,
+-				sizeof(struct mt76_freq_range_power),
+-				GFP_KERNEL);
+-	if (!phy->frp)
+-		return -ENOMEM;
++	/* SAR (cfg80211 sar_specs API) is not available in this kernel */
+ 
+ 	hw->txq_data_size = sizeof(struct mt76_txq);
+ 	hw->uapsd_max_sp_len = IEEE80211_WMM_IE_STA_QOSINFO_SP_ALL;
+@@ -521,7 +494,6 @@
+ 	wiphy_read_of_freq_limits(phy->hw->wiphy);
+ 	mt76_check_sband(phy, &phy->sband_2g, NL80211_BAND_2GHZ);
+ 	mt76_check_sband(phy, &phy->sband_5g, NL80211_BAND_5GHZ);
+-	mt76_check_sband(phy, &phy->sband_6g, NL80211_BAND_6GHZ);
+ 
+ 	ret = ieee80211_register_hw(phy->hw);
+ 	if (ret)
+@@ -646,7 +618,6 @@
+ 	wiphy_read_of_freq_limits(hw->wiphy);
+ 	mt76_check_sband(&dev->phy, &phy->sband_2g, NL80211_BAND_2GHZ);
+ 	mt76_check_sband(&dev->phy, &phy->sband_5g, NL80211_BAND_5GHZ);
+-	mt76_check_sband(&dev->phy, &phy->sband_6g, NL80211_BAND_6GHZ);
+ 
+ 	if (IS_ENABLED(CONFIG_MT76_LEDS)) {
+ 		ret = mt76_led_init(dev);
+@@ -659,7 +630,7 @@
+ 		return ret;
+ 
+ 	WARN_ON(mt76_worker_setup(hw, &dev->tx_worker, NULL, "tx"));
+-	sched_set_fifo_low(dev->tx_worker.task);
++	mt76_sched_set_fifo_low(dev->tx_worker.task);
+ 
+ 	return 0;
+ }
+@@ -902,8 +873,7 @@
+ 	if (chan == phy->main_chan) {
+ 		survey->filled |= SURVEY_INFO_IN_USE;
+ 
+-		if (dev->drv->drv_flags & MT_DRV_SW_RX_AIRTIME)
+-			survey->filled |= SURVEY_INFO_TIME_BSS_RX;
++		/* rx airtime accounting disabled */
+ 	}
+ 
+ 	survey->time_busy = div_u64(state->cc_busy, 1000);
+@@ -912,7 +882,6 @@
+ 	survey->noise = state->noise;
+ 
+ 	spin_lock_bh(&dev->cc_lock);
+-	survey->time_bss_rx = div_u64(state->cc_bss_rx, 1000);
+ 	survey->time_tx = div_u64(state->cc_tx, 1000);
+ 	spin_unlock_bh(&dev->cc_lock);
+ 
+@@ -1103,7 +1072,8 @@
+ 	u32 airtime;
+ 	u8 tidno = status->qos_ctl & IEEE80211_QOS_CTL_TID_MASK;
+ 
+-	airtime = ieee80211_calc_rx_airtime(dev->hw, &info, len);
++	/* no exported airtime helper in this kernel; skip BSS rx accounting */
++	airtime = 0;
+ 	spin_lock(&dev->cc_lock);
+ 	dev->cur_cc_bss_rx += airtime;
+ 	spin_unlock(&dev->cc_lock);
+@@ -1112,7 +1082,6 @@
+ 		return;
+ 
+ 	sta = container_of((void *)wcid, struct ieee80211_sta, drv_priv);
+-	ieee80211_sta_register_airtime(sta, tidno, 0, airtime);
+ }
+ 
+ static void
+@@ -1259,7 +1228,7 @@
+ 		mt76_check_ccmp_pn(skb);
+ 		skb_shinfo(skb)->frag_list = NULL;
+ 		mt76_rx_convert(dev, skb, &hw, &sta);
+-		ieee80211_rx_list(hw, sta, skb, &list);
++		ieee80211_rx_napi(hw, sta, skb, napi);
+ 
+ 		/* subsequent amsdu frames */
+ 		while (nskb) {
+@@ -1268,7 +1237,7 @@
+ 			skb->next = NULL;
+ 
+ 			mt76_rx_convert(dev, skb, &hw, &sta);
+-			ieee80211_rx_list(hw, sta, skb, &list);
++			ieee80211_rx_napi(hw, sta, skb, napi);
+ 		}
+ 	}
+ 	spin_unlock(&dev->rx_lock);
+@@ -1421,28 +1390,10 @@
+ EXPORT_SYMBOL_GPL(mt76_get_txpower);
+ 
+ int mt76_init_sar_power(struct ieee80211_hw *hw,
+-			const struct cfg80211_sar_specs *sar)
++			const void *sar_ops)
+ {
+-	struct mt76_phy *phy = hw->priv;
+-	const struct cfg80211_sar_capa *capa = hw->wiphy->sar_capa;
+-	int i;
+-
+-	if (sar->type != NL80211_SAR_TYPE_POWER || !sar->num_sub_specs)
+-		return -EINVAL;
+-
+-	for (i = 0; i < sar->num_sub_specs; i++) {
+-		u32 index = sar->sub_specs[i].freq_range_index;
+-		/* SAR specifies power limitaton in 0.25dbm */
+-		s32 power = sar->sub_specs[i].power >> 1;
+-
+-		if (power > 127 || power < -127)
+-			power = 127;
+-
+-		phy->frp[index].range = &capa->freq_ranges[index];
+-		phy->frp[index].power = power;
+-	}
+-
+-	return 0;
++	/* SAR power limits are unsupported on this kernel */
++	return -EOPNOTSUPP;
+ }
+ EXPORT_SYMBOL_GPL(mt76_init_sar_power);
+ 
+@@ -1450,25 +1401,6 @@
+ 		       struct ieee80211_channel *chan,
+ 		       int power)
+ {
+-	const struct cfg80211_sar_capa *capa = phy->hw->wiphy->sar_capa;
+-	int freq, i;
+-
+-	if (!capa || !phy->frp)
+-		return power;
+-
+-	if (power > 127 || power < -127)
+-		power = 127;
+-
+-	freq = ieee80211_channel_to_frequency(chan->hw_value, chan->band);
+-	for (i = 0 ; i < capa->num_freq_ranges; i++) {
+-		if (phy->frp[i].range &&
+-		    freq >= phy->frp[i].range->start_freq &&
+-		    freq < phy->frp[i].range->end_freq) {
+-			power = min_t(int, phy->frp[i].power, power);
+-			break;
+-		}
+-	}
+-
+ 	return power;
+ }
+ EXPORT_SYMBOL_GPL(mt76_get_sar_power);
+@@ -1476,7 +1408,7 @@
+ static void
+ __mt76_csa_finish(void *priv, u8 *mac, struct ieee80211_vif *vif)
+ {
+-	if (vif->csa_active && ieee80211_beacon_cntdwn_is_complete(vif))
++	if (vif->csa_active && mt76_beacon_cntdwn_is_complete(vif))
+ 		ieee80211_csa_finish(vif);
+ }
+ 
+@@ -1501,7 +1433,7 @@
+ 	if (!vif->csa_active)
+ 		return;
+ 
+-	dev->csa_complete |= ieee80211_beacon_cntdwn_is_complete(vif);
++	dev->csa_complete |= mt76_beacon_cntdwn_is_complete(vif);
+ }
+ 
+ void mt76_csa_check(struct mt76_dev *dev)
+diff -ruN a/mt76/mt76.h b/mt76/mt76.h
+--- a/mt76/mt76.h	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/mt76.h	2026-10-14 21:18:11.758790321 +0000
+@@ -13,7 +13,8 @@
+ #include <linux/leds.h>
+ #include <linux/usb.h>
+ #include <linux/average.h>
+-#include <linux/soc/mediatek/mtk_wed.h>
++#include "mt76_wed_compat.h"
++#include "mt76_kernel_compat.h"
+ #include <net/mac80211.h>
+ #include "util.h"
+ #include "testmode.h"
+@@ -1193,7 +1194,7 @@
+ int mt76_get_txpower(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+ 		     int *dbm);
+ int mt76_init_sar_power(struct ieee80211_hw *hw,
+-			const struct cfg80211_sar_specs *sar);
++			const void *sar_ops);
+ int mt76_get_sar_power(struct mt76_phy *phy,
+ 		       struct ieee80211_channel *chan,
+ 		       int power);
+diff -ruN a/mt76/mt76_connac_mac.c b/mt76/mt76_connac_mac.c
+--- a/mt76/mt76_connac_mac.c	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/mt76_connac_mac.c	2026-10-14 21:30:34.586790037 +0000
+@@ -282,27 +282,7 @@
+ 		goto legacy;
+ 	}
+ 
+-	if (beacon) {
+-		struct cfg80211_bitrate_mask *mask;
+-
+-		mask = &vif->bss_conf.beacon_tx_rate;
+-		if (hweight16(mask->control[band].he_mcs[0]) == 1) {
+-			rateidx = ffs(mask->control[band].he_mcs[0]) - 1;
+-			mode = MT_PHY_TYPE_HE_SU;
+-			goto out;
+-		} else if (hweight16(mask->control[band].vht_mcs[0]) == 1) {
+-			rateidx = ffs(mask->control[band].vht_mcs[0]) - 1;
+-			mode = MT_PHY_TYPE_VHT;
+-			goto out;
+-		} else if (hweight8(mask->control[band].ht_mcs[0]) == 1) {
+-			rateidx = ffs(mask->control[band].ht_mcs[0]) - 1;
+-			mode = MT_PHY_TYPE_HT;
+-			goto out;
+-		} else if (hweight32(mask->control[band].legacy) == 1) {
+-			rateidx = ffs(mask->control[band].legacy) - 1;
+-			goto legacy;
+-		}
+-	}
++	/* beacon rate mask: not representable on this mac80211 */
+ 
+ 	mcast_rate = vif->bss_conf.mcast_rate[band];
+ 	if (mcast && mcast_rate > 0)
+diff -ruN a/mt76/mt76_connac_mcu.c b/mt76/mt76_connac_mcu.c
+--- a/mt76/mt76_connac_mcu.c	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/mt76_connac_mcu.c	2026-10-14 21:30:34.594790037 +0000
+@@ -763,7 +763,7 @@
+ 		sband = mphy->hw->wiphy->bands[band];
+ 		ht_cap = &sband->ht_cap;
+ 		vht_cap = &sband->vht_cap;
+-		he_cap = ieee80211_get_he_iftype_cap(sband, vif->type);
++		he_cap = mt76_get_he_iftype_cap(sband, vif->type);
+ 	}
+ 
+ 	if (band == NL80211_BAND_2GHZ) {
+@@ -838,15 +838,7 @@
+ 	/* starec he */
+ 	if (sta->he_cap.has_he) {
+ 		mt76_connac_mcu_sta_he_tlv(skb, sta);
+-		if (band == NL80211_BAND_6GHZ &&
+-		    sta_state == MT76_STA_INFO_STATE_ASSOC) {
+-			struct sta_rec_he_6g_capa *he_6g_capa;
+-
+-			tlv = mt76_connac_mcu_add_tlv(skb, STA_REC_HE_6G,
+-						      sizeof(*he_6g_capa));
+-			he_6g_capa = (struct sta_rec_he_6g_capa *)tlv;
+-			he_6g_capa->capa = sta->he_6ghz_capa.capa;
+-		}
++		/* no 6 GHz station capability container here */
+ 	}
+ 
+ 	tlv = mt76_connac_mcu_add_tlv(skb, STA_REC_PHY, sizeof(*phy));
+@@ -909,27 +901,20 @@
+ 	struct tlv *tlv;
+ 	u32 flags = 0;
+ 
+-	if (sta->ht_cap.ht_supported || sta->he_6ghz_capa.capa) {
++	if (sta->ht_cap.ht_supported) {
+ 		tlv = mt76_connac_mcu_add_nested_tlv(skb, WTBL_HT, sizeof(*ht),
+ 						     wtbl_tlv, sta_wtbl);
+ 		ht = (struct wtbl_ht *)tlv;
+ 		ht->ldpc = ht_ldpc &&
+ 			   !!(sta->ht_cap.cap & IEEE80211_HT_CAP_LDPC_CODING);
+ 
+-		if (sta->ht_cap.ht_supported) {
+-			ht->af = sta->ht_cap.ampdu_factor;
+-			ht->mm = sta->ht_cap.ampdu_density;
+-		} else {
+-			ht->af = le16_get_bits(sta->he_6ghz_capa.capa,
+-					       IEEE80211_HE_6GHZ_CAP_MAX_AMPDU_LEN_EXP);
+-			ht->mm = le16_get_bits(sta->he_6ghz_capa.capa,
+-					       IEEE80211_HE_6GHZ_CAP_MIN_MPDU_START);
+-		}
++		ht->af = sta->ht_cap.ampdu_factor;
++		ht->mm = sta->ht_cap.ampdu_density;
+ 
+ 		ht->ht = true;
+ 	}
+ 
+-	if (sta->vht_cap.vht_supported || sta->he_6ghz_capa.capa) {
++	if (sta->vht_cap.vht_supported) {
+ 		struct wtbl_vht *vht;
+ 		u8 af;
+ 
+@@ -1244,7 +1229,7 @@
+ 		sband = phy->hw->wiphy->bands[band];
+ 		ht_cap = &sband->ht_cap;
+ 		vht_cap = &sband->vht_cap;
+-		he_cap = ieee80211_get_he_iftype_cap(sband, vif->type);
++		he_cap = mt76_get_he_iftype_cap(sband, vif->type);
+ 	}
+ 
+ 	if (band == NL80211_BAND_2GHZ) {
+@@ -1283,7 +1268,7 @@
+ 
+ 	sband = phy->hw->wiphy->bands[band];
+ 
+-	return ieee80211_get_he_iftype_cap(sband, vif->type);
++	return mt76_get_he_iftype_cap(sband, vif->type);
+ }
+ EXPORT_SYMBOL_GPL(mt76_connac_get_he_phy_cap);
+ 
+@@ -1460,9 +1445,9 @@
+ 
+ 		if (enable) {
+ 			he_req.bss_color.enable =
+-				vif->bss_conf.he_bss_color.enabled;
++				(vif->bss_conf.bss_color != 0);
+ 			he_req.bss_color.bss_color =
+-				vif->bss_conf.he_bss_color.color;
++				vif->bss_conf.bss_color;
+ 		}
+ 
+ 		mt76_connac_mcu_uni_bss_he_tlv(phy, vif,
+@@ -2686,16 +2671,7 @@
+ 	case NL80211_IFTYPE_MONITOR:
+ 		break;
+ 	case NL80211_IFTYPE_AP:
+-		if (ieee80211_hw_check(phy->hw, SUPPORTS_MULTI_BSSID)) {
+-			u8 bssid_id = vif->bss_conf.bssid_indicator;
+-			struct wiphy *wiphy = phy->hw->wiphy;
+-
+-			if (bssid_id > ilog2(wiphy->mbssid_max_interfaces))
+-				return -EINVAL;
+-
+-			bss->non_tx_bssid = vif->bss_conf.bssid_index;
+-			bss->max_bssid = bssid_id;
+-		}
++		/* MBSSID not available on this kernel */
+ 		break;
+ 	case NL80211_IFTYPE_STATION:
+ 		if (enable) {
+diff -ruN a/mt76/mt76_kernel_compat.h b/mt76/mt76_kernel_compat.h
+--- a/mt76/mt76_kernel_compat.h	1970-01-01 00:00:00.000000000 +0000
++++ b/mt76/mt76_kernel_compat.h	2026-10-14 21:28:22.058790088 +0000
+@@ -0,0 +1,236 @@
++/* SPDX-License-Identifier: ISC
++ *
++ * Kernel-version glue for the backported mt76 USB driver.
++ *
++ * The driver comes from a 5.19-era tree while the target kernel is a 4.19
++ * vendor kernel, so a handful of helpers simply do not exist here. Everything
++ * in this file is either a constant that this kernel never uses, or a thin
++ * wrapper around an equivalent that does exist.
++ */
++#ifndef __MT76_KERNEL_COMPAT_H
++#define __MT76_KERNEL_COMPAT_H
++#include <linux/sched.h>
++#include <linux/sched/types.h>
++#include <linux/timekeeping.h>
++#include <linux/bitfield.h>
++#include <linux/of_net.h>
++#include <net/cfg80211.h>
++#include <net/mac80211.h>
++/*
++ * No 6 GHz band exists here. The identifier is kept usable for the many
++ * comparisons in the shared connac code, but it is never published through
++ * wiphy->bands[] so no code can ever index with it.
++ */
++#define NL80211_BAND_6GHZ NUM_NL80211_BANDS
++/*
++ * Marker for "firmware already stripped the 802.11 header". The RX header
++ * translation feature is switched off for this build (see mt7921/init.c), so
++ * this only ever stays clear; the bit is outside the flags this mac80211
++ * defines and therefore cannot collide with anything.
++ */
++#ifndef RX_FLAG_8023
++#define RX_FLAG_8023 BIT(28)
++#endif
++/* field helpers ------------------------------------------------------------------ */
++#ifndef u8_encode_bits
++#define u8_encode_bits(val, mask)FIELD_PREP(mask, val)
++#endif
++#ifndef u16_encode_bits
++#define u16_encode_bits(val, mask)FIELD_PREP(mask, val)
++#endif
++#ifndef u32_encode_bits
++#define u32_encode_bits(val, mask)FIELD_PREP(mask, val)
++#endif
++/* compiler statement attribute (5.4+) */
++#ifndef fallthrough
++#define fallthrough do { } while (0)
++#endif
++/* ktime_get_boottime_ns (5.7+) */
++#ifndef ktime_get_boottime_ns
++#define ktime_get_boottime_ns()ktime_to_ns(ktime_get_boottime())
++#endif
++/* sched_set_fifo_low (5.9+): raise the tx worker to low RT priority */
++static inline void mt76_sched_set_fifo_low(struct task_struct *task)
++{
++	struct sched_param param = { .sched_priority = 1 };
++
++	sched_setscheduler_nocheck(task, SCHED_FIFO, &param);
++}
++/* ieee80211_disconnect (5.2+): this kernel reports a lost connection instead,
++ * which makes mac80211 tear the association down and reassociate. */
++static inline void mt76_ieee80211_disconnect(struct ieee80211_vif *vif,
++					     bool reconnect)
++{
++	ieee80211_connection_loss(vif);
++}
++/* no countdown inquiry here: the firmware tells us when the switch is done */
++static inline bool mt76_beacon_cntdwn_is_complete(struct ieee80211_vif *vif)
++{
++	return true;
++}
++
++/*
++ * Capability masks and status codes introduced after this kernel's headers
++ * were cut. Values are the upstream v5.19 ones; the driver writes them into
++ * HE capability elements, so they must be the real bit positions.
++ */
++#ifndef IEEE80211_AMPDU_TX_START_IMMEDIATE
++#define IEEE80211_AMPDU_TX_START_IMMEDIATE 1
++#endif
++#ifndef IEEE80211_KEY_FLAG_GENERATE_MMIE
++#define IEEE80211_KEY_FLAG_GENERATE_MMIE BIT(10)
++#endif
++#ifndef IEEE80211_HE_MAC_CAP3_MAX_AMPDU_LEN_EXP_EXT_3
++#define IEEE80211_HE_MAC_CAP3_MAX_AMPDU_LEN_EXP_EXT_3 0x18
++#endif
++#ifndef IEEE80211_HE_MAC_CAP4_AMSDU_IN_AMPDU
++#define IEEE80211_HE_MAC_CAP4_AMSDU_IN_AMPDU 0x40
++#endif
++#ifndef IEEE80211_HE_MAC_CAP5_OM_CTRL_UL_MU_DATA_DIS_RX
++#define IEEE80211_HE_MAC_CAP5_OM_CTRL_UL_MU_DATA_DIS_RX 0x10
++#endif
++#ifndef IEEE80211_HE_PHY_CAP7_POWER_BOOST_FACTOR_SUPP
++#define IEEE80211_HE_PHY_CAP7_POWER_BOOST_FACTOR_SUPP 0x02
++#endif
++#ifndef IEEE80211_HE_PHY_CAP8_DCM_MAX_RU_484
++#define IEEE80211_HE_PHY_CAP8_DCM_MAX_RU_484 0x40
++#endif
++#ifndef IEEE80211_HE_PHY_CAP9_LONGER_THAN_16_SIGB_OFDM_SYM
++#define IEEE80211_HE_PHY_CAP9_LONGER_THAN_16_SIGB_OFDM_SYM 0x01
++#endif
++#ifndef IEEE80211_HE_PHY_CAP9_NON_TRIGGERED_CQI_FEEDBACK
++#define IEEE80211_HE_PHY_CAP9_NON_TRIGGERED_CQI_FEEDBACK 0x02
++#endif
++#ifndef IEEE80211_HE_PHY_CAP9_TX_1024_QAM_LESS_THAN_242_TONE_RU
++#define IEEE80211_HE_PHY_CAP9_TX_1024_QAM_LESS_THAN_242_TONE_RU 0x04
++#endif
++#ifndef IEEE80211_HE_PHY_CAP9_RX_1024_QAM_LESS_THAN_242_TONE_RU
++#define IEEE80211_HE_PHY_CAP9_RX_1024_QAM_LESS_THAN_242_TONE_RU 0x08
++#endif
++#ifndef IEEE80211_HE_PHY_CAP9_RX_FULL_BW_SU_USING_MU_WITH_COMP_SIGB
++#define IEEE80211_HE_PHY_CAP9_RX_FULL_BW_SU_USING_MU_WITH_COMP_SIGB 0x10
++#endif
++#ifndef IEEE80211_HE_PHY_CAP9_RX_FULL_BW_SU_USING_MU_WITH_NON_COMP_SIGB
++#define IEEE80211_HE_PHY_CAP9_RX_FULL_BW_SU_USING_MU_WITH_NON_COMP_SIGB 0x20
++#endif
++/* upstream renamed the typo'd constant; the driver still uses the old spelling */
++#ifndef IEEE80211_HE_PHY_CAP9_NOMIMAL_PKT_PADDING_16US
++#define IEEE80211_HE_PHY_CAP9_NOMIMAL_PKT_PADDING_16US 0x02
++#endif
++/* 6 GHz capability container: the band does not exist here, but the shared
++ * capability-building code still needs the identifiers. */
++#ifndef IEEE80211_HE_6GHZ_CAP_MIN_MPDU_START
++#define IEEE80211_HE_6GHZ_CAP_MIN_MPDU_START 0x0007
++#endif
++#ifndef IEEE80211_HE_6GHZ_CAP_MAX_AMPDU_LEN_EXP
++#define IEEE80211_HE_6GHZ_CAP_MAX_AMPDU_LEN_EXP 0x0038
++#endif
++#ifndef IEEE80211_HE_6GHZ_CAP_MAX_MPDU_LEN
++#define IEEE80211_HE_6GHZ_CAP_MAX_MPDU_LEN 0x00c0
++#endif
++#ifndef IEEE80211_HE_6GHZ_CAP_RX_ANTPAT_CONS
++#define IEEE80211_HE_6GHZ_CAP_RX_ANTPAT_CONS 0x1000
++#endif
++#ifndef IEEE80211_HE_6GHZ_CAP_TX_ANTPAT_CONS
++#define IEEE80211_HE_6GHZ_CAP_TX_ANTPAT_CONS 0x2000
++#endif
++/*
++ * Hardware capability bits this mac80211 does not know. They live outside the
++ * range of flags it inspects, so setting one is inert.
++ */
++#ifndef IEEE80211_HW_SUPPORTS_VHT_EXT_NSS_BW
++#define IEEE80211_HW_SUPPORTS_VHT_EXT_NSS_BW 50
++#endif
++#ifndef IEEE80211_HW_SUPPORTS_TX_ENCAP_OFFLOAD
++#define IEEE80211_HW_SUPPORTS_TX_ENCAP_OFFLOAD 51
++#endif
++#ifndef IEEE80211_HW_SUPPORTS_RX_DECAP_OFFLOAD
++#define IEEE80211_HW_SUPPORTS_RX_DECAP_OFFLOAD 52
++#endif
++
++
++/* rcu_replace_pointer (5.0+): swap under RCU and hand back the old value */
++#ifndef rcu_replace_pointer
++#define rcu_replace_pointer(rcu_ptr, ptr, c)				\
++({									\
++	typeof(ptr) __old = rcu_dereference_protected(rcu_ptr, c);	\
++	rcu_assign_pointer(rcu_ptr, ptr);				\
++	__old;								\
++})
++#endif
++/* this kernel only defines lockdep_is_held() when lockdep is built in */
++#ifndef lockdep_is_held
++#define lockdep_is_held(lock) (1)
++#endif
++/* netlink parsing entry points renamed in 5.2; the old ones still exist */
++#ifndef nla_parse_deprecated
++#define nla_parse_deprecated(tb, maxtype, head, len, policy, extack)	\
++	nla_parse(tb, maxtype, head, len, policy, extack)
++#endif
++#ifndef nla_parse_nested_deprecated
++#define nla_parse_nested_deprecated(tb, maxtype, nla, policy, extack)	\
++	nla_parse_nested(tb, maxtype, nla, policy, extack)
++#endif
++#ifndef NLA_POLICY_EXACT_LEN
++#define NLA_POLICY_EXACT_LEN(_len) { .type = NLA_BINARY, .len = (_len) }
++#endif
++/* of_get_mac_address() only grew the (dev, mac) form in 5.2 */
++static inline int mt76_of_get_mac_address(struct device *dev, u8 *mac)
++{
++	const void *addr;
++
++	if (!dev->of_node)
++		return -ENODEV;
++
++	addr = of_get_mac_address(dev->of_node);
++	if (IS_ERR(addr))
++		return PTR_ERR(addr);
++
++	ether_addr_copy(mac, addr);
++	return 0;
++}
++
++
++/*
++ * Bits added to mac80211 flag words after this kernel was cut. They are kept
++ * outside the range this kernel inspects, so the code paths they guard stay
++ * dormant instead of breaking the build.
++ */
++#ifndef BSS_CHANGED_UNSOL_BCAST_PROBE_RESP
++#define BSS_CHANGED_UNSOL_BCAST_PROBE_RESP BIT(30)
++#endif
++#ifndef BSS_CHANGED_FILS_DISCOVERY
++#define BSS_CHANGED_FILS_DISCOVERY BIT(31)
++#endif
++#ifndef IEEE80211_HW_SUPPORTS_MULTI_BSSID
++#define IEEE80211_HW_SUPPORTS_MULTI_BSSID 53
++#endif
++#ifndef IEEE80211_TX_CTL_HW_80211_ENCAP
++#define IEEE80211_TX_CTL_HW_80211_ENCAP BIT(31)
++#endif
++/* HE capability field masks that were renamed upstream */
++#ifndef IEEE80211_HE_PHY_CAP8_DCM_MAX_RU_MASK
++#define IEEE80211_HE_PHY_CAP8_DCM_MAX_RU_MASK 0xc0
++#endif
++#ifndef IEEE80211_HE_MAC_CAP3_MAX_AMPDU_LEN_EXP_MASK
++#define IEEE80211_HE_MAC_CAP3_MAX_AMPDU_LEN_EXP_MASK \
++	IEEE80211_HE_MAC_CAP3_MAX_A_AMPDU_LEN_EXP_MASK
++#endif
++/* ieee80211_get_he_iftype_cap() does not exist here: same lookup, local */
++static inline const struct ieee80211_sta_he_cap *
++mt76_get_he_iftype_cap(struct ieee80211_supported_band *sband, u32 iftype)
++{
++	int i;
++
++	if (!sband || !sband->iftype_data)
++		return NULL;
++
++	for (i = 0; i < sband->n_iftype_data; i++) {
++		if (sband->iftype_data[i].types_mask & BIT(iftype))
++			return &sband->iftype_data[i].he_cap;
++	}
++
++	return NULL;
++}
++
++#endif /* __MT76_KERNEL_COMPAT_H */
+diff -ruN a/mt76/mt76_wed_compat.h b/mt76/mt76_wed_compat.h
+--- a/mt76/mt76_wed_compat.h	1970-01-01 00:00:00.000000000 +0000
++++ b/mt76/mt76_wed_compat.h	2026-10-14 21:13:09.666790436 +0000
+@@ -0,0 +1,67 @@
++/* SPDX-License-Identifier: ISC
++ *
++ * Minimal stand-in for <linux/soc/mediatek/mtk_wed.h>.
++ *
++ * WED is the MT7915/MT7622 ethernet-dispatch engine. It only matters for the
++ * PCIe/MMIO front-ends, which this build does not use (USB only). The kernel we
++ * target predates the header entirely, so we provide an inert local version:
++ * every entry point reports "not active", which makes the mmio/dma glue fall
++ * back to plain DMA paths exactly as on a device without WED.
++ */
++#ifndef __MT76_WED_COMPAT_H
++#define __MT76_WED_COMPAT_H
++
++#include <linux/types.h>
++
++struct mtk_wed_device {
++	struct {
++		/* first token owned by WED */
++		u16 token_start;
++	} wlan;
++	struct {
++		u32 reg_base;
++	} tx_ring[8];
++
++	struct {
++		u32 reg_base;
++	} txfree_ring;
++};
++
++static inline bool mtk_wed_device_active(struct mtk_wed_device *dev)
++{
++	return false;
++}
++
++static inline u32 mtk_wed_device_reg_read(struct mtk_wed_device *dev, u32 reg)
++{
++	return ~0;
++}
++
++static inline void mtk_wed_device_reg_write(struct mtk_wed_device *dev,
++					    u32 reg, u32 val)
++{
++}
++
++static inline int mtk_wed_device_irq_set_mask(struct mtk_wed_device *dev,
++					      u32 mask)
++{
++	return 0;
++}
++
++static inline int mtk_wed_device_tx_ring_setup(struct mtk_wed_device *dev,
++					       int idx, void __iomem *regs)
++{
++	return -EOPNOTSUPP;
++}
++
++static inline void mtk_wed_device_detach(struct mtk_wed_device *dev)
++{
++}
++
++static inline int mtk_wed_device_txfree_ring_setup(struct mtk_wed_device *dev,
++						   void __iomem *regs)
++{
++	return -EOPNOTSUPP;
++}
++
++#endif /* __MT76_WED_COMPAT_H */
+\ No newline at end of file
+diff -ruN a/mt76/mt7921/Kconfig b/mt76/mt7921/Kconfig
+--- a/mt76/mt7921/Kconfig	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/mt7921/Kconfig	2026-10-14 20:32:47.174791360 +0000
+@@ -2,7 +2,6 @@
+ config MT7921_COMMON
+ 	tristate
+ 	select MT76_CONNAC_LIB
+-	select WANT_DEV_COREDUMP
+ 
+ config MT7921E
+ 	tristate "MediaTek MT7921E (PCIe) support"
+diff -ruN a/mt76/mt7921/init.c b/mt76/mt7921/init.c
+--- a/mt76/mt7921/init.c	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/mt7921/init.c	2026-10-14 21:18:11.758790321 +0000
+@@ -88,7 +88,7 @@
+ 	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_BEACON_RATE_LEGACY);
+ 	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_BEACON_RATE_HT);
+ 	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_BEACON_RATE_VHT);
+-	wiphy_ext_feature_set(wiphy, NL80211_EXT_FEATURE_BEACON_RATE_HE);
++	/* BEACON_RATE_HE ext feature unknown to this kernel */
+ 
+ 	ieee80211_hw_set(hw, SINGLE_SCAN_ON_ALL_BANDS);
+ 	ieee80211_hw_set(hw, HAS_RATE_CONTROL);
+@@ -137,7 +137,7 @@
+ 	/* enable hardware de-agg */
+ 	mt76_set(dev, MT_MDP_DCR0, MT_MDP_DCR0_DAMSDU_EN);
+ 	/* enable hardware rx header translation */
+-	mt76_set(dev, MT_MDP_DCR0, MT_MDP_DCR0_RX_HDR_TRANS_EN);
++	/* RX header translation left disabled: this mac80211 expects 802.11 */
+ 
+ 	for (i = 0; i < MT7921_WTBL_SIZE; i++)
+ 		mt7921_mac_wtbl_update(dev, i,
+diff -ruN a/mt76/mt7921/mac.c b/mt76/mt7921/mac.c
+--- a/mt76/mt7921/mac.c	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/mt7921/mac.c	2026-10-14 21:16:37.002790357 +0000
+@@ -119,9 +119,6 @@
+ 
+ 			if (!tx_cur && !rx_cur)
+ 				continue;
+-
+-			ieee80211_sta_register_airtime(sta, tid, tx_cur,
+-						       rx_cur);
+ 		}
+ 
+ 		/* We don't support reading GI info from txs packets.
+@@ -859,7 +856,7 @@
+ 	struct ieee80211_hw *hw = mt76_hw(dev);
+ 
+ 	if (vif->type == NL80211_IFTYPE_STATION)
+-		ieee80211_disconnect(vif, true);
++		mt76_ieee80211_disconnect(vif, true);
+ 
+ 	mt76_connac_mcu_uni_add_dev(&dev->mphy, vif, &mvif->sta.wcid, true);
+ 	mt7921_mcu_set_tx(dev, vif);
+@@ -1133,8 +1130,7 @@
+ 	}
+ 
+ 	if (dump)
+-		dev_coredumpv(dev->mt76.dev, dump, MT76_CONNAC_COREDUMP_SZ,
+-			      GFP_KERNEL);
++		vfree(dump);
+ 
+ 	mt7921_reset(&dev->mt76);
+ }
+diff -ruN a/mt76/mt7921/main.c b/mt76/mt7921/main.c
+--- a/mt76/mt7921/main.c	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/mt7921/main.c	2026-10-14 21:16:37.014790357 +0000
+@@ -174,31 +174,7 @@
+ 				IEEE80211_HE_PHY_CAP9_NOMIMAL_PKT_PADDING_16US;
+ 		}
+ 
+-		if (band == NL80211_BAND_6GHZ) {
+-			struct ieee80211_supported_band *sband =
+-				&phy->mt76->sband_5g.sband;
+-			struct ieee80211_sta_vht_cap *vht_cap = &sband->vht_cap;
+-			struct ieee80211_sta_ht_cap *ht_cap = &sband->ht_cap;
+-			u32 exp;
+-			u16 cap;
+-
+-			cap = u16_encode_bits(ht_cap->ampdu_density,
+-					IEEE80211_HE_6GHZ_CAP_MIN_MPDU_START);
+-			exp = u32_get_bits(vht_cap->cap,
+-				IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK);
+-			cap |= u16_encode_bits(exp,
+-					IEEE80211_HE_6GHZ_CAP_MAX_AMPDU_LEN_EXP);
+-			exp = u32_get_bits(vht_cap->cap,
+-					   IEEE80211_VHT_CAP_MAX_MPDU_MASK);
+-			cap |= u16_encode_bits(exp,
+-					IEEE80211_HE_6GHZ_CAP_MAX_MPDU_LEN);
+-			if (vht_cap->cap & IEEE80211_VHT_CAP_TX_ANTENNA_PATTERN)
+-				cap |= IEEE80211_HE_6GHZ_CAP_TX_ANTPAT_CONS;
+-			if (vht_cap->cap & IEEE80211_VHT_CAP_RX_ANTENNA_PATTERN)
+-				cap |= IEEE80211_HE_6GHZ_CAP_RX_ANTPAT_CONS;
+-
+-			data[idx].he_6ghz_capa.capa = cpu_to_le16(cap);
+-		}
++		/* 6 GHz capability block: band unsupported here */
+ 		idx++;
+ 	}
+ 
+@@ -228,14 +204,7 @@
+ 		band->iftype_data = data;
+ 		band->n_iftype_data = n;
+ 
+-		if (phy->mt76->cap.has_6ghz) {
+-			data = phy->iftype[NL80211_BAND_6GHZ];
+-			n = mt7921_init_he_caps(phy, NL80211_BAND_6GHZ, data);
+-
+-			band = &phy->mt76->sband_6g.sband;
+-			band->iftype_data = data;
+-			band->n_iftype_data = n;
+-		}
++		/* no 6 GHz band on this kernel */
+ 	}
+ }
+ 
+@@ -1394,26 +1363,6 @@
+ 			   HZ / 2);
+ }
+ 
+-static void mt7921_sta_set_decap_offload(struct ieee80211_hw *hw,
+-					 struct ieee80211_vif *vif,
+-					 struct ieee80211_sta *sta,
+-					 bool enabled)
+-{
+-	struct mt7921_sta *msta = (struct mt7921_sta *)sta->drv_priv;
+-	struct mt7921_dev *dev = mt7921_hw_dev(hw);
+-
+-	mt7921_mutex_acquire(dev);
+-
+-	if (enabled)
+-		set_bit(MT_WCID_FLAG_HDR_TRANS, &msta->wcid.flags);
+-	else
+-		clear_bit(MT_WCID_FLAG_HDR_TRANS, &msta->wcid.flags);
+-
+-	mt76_connac_mcu_sta_update_hdr_trans(&dev->mt76, vif, &msta->wcid,
+-					     MCU_UNI_CMD(STA_REC_UPDATE));
+-
+-	mt7921_mutex_release(dev);
+-}
+ 
+ #if IS_ENABLED(CONFIG_IPV6)
+ static void mt7921_ipv6_addr_change(struct ieee80211_hw *hw,
+@@ -1476,13 +1425,13 @@
+ #endif
+ 
+ int mt7921_set_tx_sar_pwr(struct ieee80211_hw *hw,
+-			  const struct cfg80211_sar_specs *sar)
++			  const void *sar)
+ {
+ 	struct mt76_phy *mphy = hw->priv;
+ 	int err;
+ 
+ 	if (sar) {
+-		err = mt76_init_sar_power(hw, sar);
++		err = mt76_init_sar_power(hw, NULL);
+ 		if (err)
+ 			return err;
+ 	}
+@@ -1495,13 +1444,13 @@
+ }
+ 
+ static int mt7921_set_sar_specs(struct ieee80211_hw *hw,
+-				const struct cfg80211_sar_specs *sar)
++				const void *sar)
+ {
+ 	struct mt7921_dev *dev = mt7921_hw_dev(hw);
+ 	int err;
+ 
+ 	mt7921_mutex_acquire(dev);
+-	err = mt7921_set_tx_sar_pwr(hw, sar);
++	err = mt7921_set_tx_sar_pwr(hw, NULL);
+ 	mt7921_mutex_release(dev);
+ 
+ 	return err;
+@@ -1583,7 +1532,6 @@
+ 	.sta_state = mt7921_sta_state,
+ 	.sta_pre_rcu_remove = mt76_sta_pre_rcu_remove,
+ 	.set_key = mt7921_set_key,
+-	.sta_set_decap_offload = mt7921_sta_set_decap_offload,
+ #if IS_ENABLED(CONFIG_IPV6)
+ 	.ipv6_addr_change = mt7921_ipv6_addr_change,
+ #endif /* CONFIG_IPV6 */
+@@ -1617,7 +1565,6 @@
+ 	.set_rekey_data = mt7921_set_rekey_data,
+ #endif /* CONFIG_PM */
+ 	.flush = mt7921_flush,
+-	.set_sar_specs = mt7921_set_sar_specs,
+ };
+ EXPORT_SYMBOL_GPL(mt7921_ops);
+ 
+diff -ruN a/mt76/mt7921/mcu.c b/mt76/mt7921/mcu.c
+--- a/mt76/mt7921/mcu.c	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/mt7921/mcu.c	2026-10-14 21:18:11.758790321 +0000
+@@ -1034,10 +1034,10 @@
+ 	req.beacon_tlv.pkt_len = cpu_to_le16(MT_TXD_SIZE + skb->len);
+ 	req.beacon_tlv.tim_ie_pos = cpu_to_le16(MT_TXD_SIZE + offs.tim_offset);
+ 
+-	if (offs.cntdwn_counter_offs[0]) {
++	if (offs.csa_counter_offs[0]) {
+ 		u16 csa_offs;
+ 
+-		csa_offs = MT_TXD_SIZE + offs.cntdwn_counter_offs[0] - 4;
++		csa_offs = MT_TXD_SIZE + offs.csa_counter_offs[0] - 4;
+ 		req.beacon_tlv.csa_ie_pos = cpu_to_le16(csa_offs);
+ 	}
+ 	dev_kfree_skb(skb);
+diff -ruN a/mt76/mt7921/mt7921.h b/mt76/mt7921/mt7921.h
+--- a/mt76/mt7921/mt7921.h	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/mt7921/mt7921.h	2026-10-14 21:16:37.010790357 +0000
+@@ -504,7 +504,7 @@
+ }
+ #endif
+ int mt7921_set_tx_sar_pwr(struct ieee80211_hw *hw,
+-			  const struct cfg80211_sar_specs *sar);
++			  const void *sar);
+ 
+ int mt7921_mcu_set_clc(struct mt7921_dev *dev, u8 *alpha2,
+ 		       enum environment_cap env_cap);
+diff -ruN a/mt76/mt7921/usb.c b/mt76/mt7921/usb.c
+--- a/mt76/mt7921/usb.c	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/mt7921/usb.c	2026-10-14 21:22:56.670790212 +0000
+@@ -173,8 +173,7 @@
+ 		.drv_flags = MT_DRV_RX_DMA_HDR | MT_DRV_HW_MGMT_TXQ |
+ 			     MT_DRV_AMSDU_OFFLOAD,
+ 		.survey_flags = SURVEY_INFO_TIME_TX |
+-				SURVEY_INFO_TIME_RX |
+-				SURVEY_INFO_TIME_BSS_RX,
++				SURVEY_INFO_TIME_RX,
+ 		.tx_prepare_skb = mt7921_usb_sdio_tx_prepare_skb,
+ 		.tx_complete_skb = mt7921_usb_sdio_tx_complete_skb,
+ 		.tx_status_data = mt7921_usb_sdio_tx_status_data,
+diff -ruN a/mt76/tx.c b/mt76/tx.c
+--- a/mt76/tx.c	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/tx.c	2026-10-14 21:21:24.558790247 +0000
+@@ -67,8 +67,7 @@
+ 		if (wcid) {
+ 			status.sta = wcid_to_sta(wcid);
+ 
+-			if (status.sta)
+-				status.rate = &wcid->rate;
++			/* per-status rate reporting is not available */
+ 		}
+ 
+ 		hw = mt76_tx_status_get_hw(dev, skb);
+@@ -214,7 +213,7 @@
+ 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
+ 	int pending;
+ 
+-	if (!wcid || info->tx_time_est)
++	if (!wcid)
+ 		return;
+ 
+ 	pending = atomic_dec_return(&wcid->non_aql_packets);
+@@ -228,7 +227,6 @@
+ 	struct mt76_tx_cb *cb = mt76_tx_skb_cb(skb);
+ 	struct ieee80211_tx_status status = {
+ 		.skb = skb,
+-		.free_list = free_list,
+ 	};
+ 	struct mt76_wcid *wcid = NULL;
+ 	struct ieee80211_hw *hw;
+@@ -284,7 +282,7 @@
+ 	int pending;
+ 	int idx;
+ 
+-	non_aql = !info->tx_time_est;
++	non_aql = true;
+ 	idx = dev->queue_ops->tx_queue_skb(dev, q, qid, skb, wcid, sta);
+ 	if (idx < 0 || !sta)
+ 		return idx;
+@@ -323,7 +321,6 @@
+ 	}
+ 
+ 	if ((dev->drv->drv_flags & MT_DRV_HW_MGMT_TXQ) &&
+-	    !(info->flags & IEEE80211_TX_CTL_HW_80211_ENCAP) &&
+ 	    !ieee80211_is_data(hdr->frame_control) &&
+ 	    !ieee80211_is_bufferable_mmpdu(skb)) {
+ 		qid = MT_TXQ_PSD;
+@@ -494,59 +491,91 @@
+ 	return n_frames;
+ }
+ 
++struct mt76_txq_sched_ctx {
++	struct mt76_phy *phy;
++	enum mt76_txq_id qid;
++	int frames;
++};
++
+ static int
+-mt76_txq_schedule_list(struct mt76_phy *phy, enum mt76_txq_id qid)
++mt76_txq_sched_one(struct mt76_phy *phy, struct ieee80211_txq *txq,
++		   enum mt76_txq_id qid)
+ {
+ 	struct mt76_queue *q = phy->q_tx[qid];
+ 	struct mt76_dev *dev = phy->dev;
+-	struct ieee80211_txq *txq;
+ 	struct mt76_txq *mtxq;
+ 	struct mt76_wcid *wcid;
+-	int ret = 0;
++	int n_frames = 0;
+ 
+-	while (1) {
+-		int n_frames = 0;
++	if (!q || !txq || mt76_txq_get_qid(txq) != qid)
++		return 0;
+ 
+-		if (test_bit(MT76_RESET, &phy->state))
+-			return -EBUSY;
++	mtxq = (struct mt76_txq *)txq->drv_priv;
++	wcid = rcu_dereference(dev->wcid[mtxq->wcid]);
++	if (!wcid || test_bit(MT_WCID_FLAG_PS, &wcid->flags))
++		return 0;
+ 
+-		if (dev->queue_ops->tx_cleanup &&
+-		    q->queued + 2 * MT_TXQ_FREE_THR >= q->ndesc) {
+-			dev->queue_ops->tx_cleanup(dev, q, false);
+-		}
++	if (mtxq->send_bar && mtxq->aggr) {
++		struct ieee80211_sta *sta = txq->sta;
++		struct ieee80211_vif *vif = txq->vif;
++		u16 agg_ssn = mtxq->agg_ssn;
++		u8 tid = txq->tid;
+ 
+-		txq = ieee80211_next_txq(phy->hw, qid);
+-		if (!txq)
+-			break;
++		mtxq->send_bar = false;
++		ieee80211_send_bar(vif, sta->addr, tid, agg_ssn);
++	}
+ 
+-		mtxq = (struct mt76_txq *)txq->drv_priv;
+-		wcid = rcu_dereference(dev->wcid[mtxq->wcid]);
+-		if (!wcid || test_bit(MT_WCID_FLAG_PS, &wcid->flags))
+-			continue;
++	if (!mt76_txq_stopped(q))
++		n_frames = mt76_txq_send_burst(phy, q, mtxq, wcid);
+ 
+-		if (mtxq->send_bar && mtxq->aggr) {
+-			struct ieee80211_txq *txq = mtxq_to_txq(mtxq);
+-			struct ieee80211_sta *sta = txq->sta;
+-			struct ieee80211_vif *vif = txq->vif;
+-			u16 agg_ssn = mtxq->agg_ssn;
+-			u8 tid = txq->tid;
++	return max(n_frames, 0);
++}
+ 
+-			mtxq->send_bar = false;
+-			ieee80211_send_bar(vif, sta->addr, tid, agg_ssn);
+-		}
++static void
++mt76_txq_sched_sta_iter(void *data, struct ieee80211_sta *sta)
++{
++	struct mt76_txq_sched_ctx *ctx = data;
++	int i;
+ 
+-		if (!mt76_txq_stopped(q))
+-			n_frames = mt76_txq_send_burst(phy, q, mtxq, wcid);
++	for (i = 0; i < ARRAY_SIZE(sta->txq); i++)
++		ctx->frames += mt76_txq_sched_one(ctx->phy, sta->txq[i], ctx->qid);
++}
+ 
+-		ieee80211_return_txq(phy->hw, txq, false);
++static void
++mt76_txq_sched_vif_iter(void *data, u8 *mac, struct ieee80211_vif *vif)
++{
++	struct mt76_txq_sched_ctx *ctx = data;
+ 
+-		if (unlikely(n_frames < 0))
+-			return n_frames;
++	ctx->frames += mt76_txq_sched_one(ctx->phy, vif->txq, ctx->qid);
++}
+ 
+-		ret += n_frames;
+-	}
++static int
++mt76_txq_schedule_list(struct mt76_phy *phy, enum mt76_txq_id qid)
++{
++	struct mt76_queue *q = phy->q_tx[qid];
++	struct mt76_dev *dev = phy->dev;
++	struct mt76_txq_sched_ctx ctx = {
++		.phy = phy,
++		.qid = qid,
++	};
+ 
+-	return ret;
++	if (!q)
++		return 0;
++	if (test_bit(MT76_RESET, &phy->state))
++		return -EBUSY;
++	if (dev->queue_ops->tx_cleanup &&
++	    q->queued + 2 * MT_TXQ_FREE_THR >= q->ndesc)
++		dev->queue_ops->tx_cleanup(dev, q, false);
++
++	/* No ieee80211_next_txq() here: walk the txqs bound to this hardware
++	 * queue. mac80211 wakes us again for anything left behind. */
++	ieee80211_iterate_stations_atomic(phy->hw, mt76_txq_sched_sta_iter,
++					  &ctx);
++	ieee80211_iterate_active_interfaces_atomic(phy->hw,
++						   IEEE80211_IFACE_ITER_RESUME_ALL,
++						   mt76_txq_sched_vif_iter, &ctx);
++
++	return ctx.frames;
+ }
+ 
+ void mt76_txq_schedule(struct mt76_phy *phy, enum mt76_txq_id qid)
+@@ -556,17 +585,11 @@
+ 	if (qid >= 4)
+ 		return;
+ 
+-	local_bh_disable();
+ 	rcu_read_lock();
+-
+ 	do {
+-		ieee80211_txq_schedule_start(phy->hw, qid);
+ 		len = mt76_txq_schedule_list(phy, qid);
+-		ieee80211_txq_schedule_end(phy->hw, qid);
+ 	} while (len > 0);
+-
+ 	rcu_read_unlock();
+-	local_bh_enable();
+ }
+ EXPORT_SYMBOL_GPL(mt76_txq_schedule);
+ 
+diff -ruN a/mt76/usb.c b/mt76/usb.c
+--- a/mt76/usb.c	2023-09-11 19:47:43.000000000 +0000
++++ b/mt76/usb.c	2026-10-14 21:28:22.062790088 +0000
+@@ -1102,8 +1102,8 @@
+ 	if (err)
+ 		return err;
+ 
+-	sched_set_fifo_low(usb->rx_worker.task);
+-	sched_set_fifo_low(usb->status_worker.task);
++	mt76_sched_set_fifo_low(usb->rx_worker.task);
++	mt76_sched_set_fifo_low(usb->status_worker.task);
+ 
+ 	return 0;
+ }
